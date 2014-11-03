@@ -1,0 +1,281 @@
+<dataConfig>
+	<dataSource type="JdbcDataSource" 
+		driver="org.postgresql.Driver"
+		url="jdbc:postgresql://localhost:5432/voylla_development3010"
+		user="voylla"
+		password="everything" />
+
+	<script>
+       		<![CDATA[ function f1(row) 
+	         {
+        		  var key = row.get("key");
+		          var value = row.get("value");
+		          field_name = "variant_count_";
+		          row.put(field_name + key, value);
+		          return row;
+	         }
+	         function f2(row)
+	         {
+	         	var mrp = row.get("mrp");
+	         	var price = row.get("price");
+	         	discount = ((mrp - price)*100/mrp);
+			var conversion = row.get("conversion");
+	         	bucket = discount/10;
+	         	if (price < 500) {
+	         		price_bucket = 1;
+	         	}
+	         	else if (price < 1000) {
+	         		price_bucket = 2;
+	         	}
+	         	else if (price < 1500) {
+	         		price_bucket = 3;
+	         	}
+	         	else if (price < 2500) {
+	         		price_bucket = 4;
+	         	}
+	         	else {
+	         		price_bucket = 5;
+	         	}
+			dollar_price = Math.ceil(price*conversion);
+	         	row.put("product_discount_percent",discount);
+	         	row.put("product_discount_bucket",bucket);
+	         	row.put("product_price_bucket",price_bucket);
+			row.put("product_selling_price_in_dollars",dollar_price);
+	         	return row;
+	         }
+	       ]]>
+ 	</script>
+
+	<document>
+		<entity name="product"
+			query="select id, name, description, coalesce(designer_id, -1) as designer_id, coalesce(tax_category_id, -1) as tax_category_id, permalink, brand_sku, is_re_orderable, created_at::timestamp::date as created_at, created_at as created_at_ts, updated_at::timestamp::date as updated_at, updated_at as updated_at_ts, available_on as available_on_ts, count_on_hand, mrp, suggested_price, relevance
+				from products
+				where updated_at > '${dataimporter.last_index_time}' or '${dataimporter.request.clean}' != 'false'">
+			<field column="id" name="product_id" />
+			<field column="name" name="product_name" />
+			<field column="description" name="product_description" />
+			<field column="designer_id" name="product_designer_id" />
+			<field column="tax_category_id" name="product_tax_category_id" />
+			<field column="permalink" name="product_permalink" />
+			<field column="brand_sku" name="product_brand_sku" />
+			<field column="is_re_orderable" name="product_is_re_orderable" />
+			<field column="created_at" name="product_created_at" />
+			<field column="created_at_ts" name="product_created_at_ts" />
+			<field column="updated_at" name="product_update_at" />
+			<field column="updated_at_ts" name="product_update_at_ts" />
+			<field column="available_on_ts" name="product_available_on_ts" />
+			<field column="count_on_hand" name="product_count_on_hand" />
+			<field column="mrp" name="product_mrp" />
+			<field column="suggested_price" name="product_suggested_price" />
+			<field column="relevance" name="product_relevance" />
+
+			<entity name="designer"
+				query="select name
+					from designers
+					where id = ${product.designer_id}">
+				<field column="name" name="product_designer_name" />
+			</entity>
+
+			<entity name="category"
+				query="select lower(name) as l_name 
+					from taxonomies
+					where id = ${product.tax_category_id}">
+				<field column="l_name" name="product_category" />
+			</entity>
+
+			<entity name="sellingPrice"
+				transformer="script:f2"
+				query = "select price_columns.price1 as price ,price_columns.mrp1 as mrp, curr.value as conversion
+									from (select v.price as price1, p.mrp as mrp1
+									from variants as v
+									inner join products as p on p.id = v.product_id
+									where product_id = ${product.id}) as price_columns, (select * from currency_conversion_factors where currency = 'USD' ORDER BY id DESC LIMIT 1) as curr">
+				<field column="price" name="product_selling_price"/>
+			</entity>
+
+			<entity name="filterColor"
+				query="select value, lower(value) as l_value
+					from product_properties
+					where product_id = ${product.id} and property_id = 905835308">
+				<field column="l_value" name="product_property_color" />
+			</entity>
+
+			<entity name="theme"
+				query="select value as theme
+					from product_properties
+					where product_id=${product.id} and property_id=905835318">
+				<field column="theme" name="product_theme_value" />
+			</entity>
+
+			<entity name="design"
+				query="select value as design
+					from product_properties
+					where product_id=${product.id} and property_id=905835342">
+				<field column="design" name="product_design_value" />
+			</entity>
+
+			<entity name="surface_finish"
+				query="select value as surface_finish
+					from product_properties
+					where product_id=${product.id} and property_id=905835344">
+				<field column="surface_finish" name="product_surface_finish_value" />
+			</entity>
+
+			<entity name="primary_metal_color"
+				query ="select pp.value
+					from product_properties as pp
+					inner join properties as p on p.id = pp.property_id
+					where p.name in ('primary_base_colour','secondry_base_colour','primary_gemstone_colour','secondry_gemstone_colour')
+					and pp.product_id=${product.id}">
+				<field column="value" name="product_property_color_new" />
+			</entity>
+
+			<entity name="taxonomy"
+				query="select distinct name, lower(permalink) as l_permalink
+					from taxons as t
+						inner join products_taxons as pt on t.id = pt.taxon_id
+					where pt.product_id = ${product.id}">
+				<field column="name" name="product_taxonomy_name" />
+				<field column="name" name="product_taxonomy_name_group" />
+				<field column="l_permalink" name="product_taxonomy_permalink" />
+			</entity>
+
+			<entity name="parent_taxonomy" 
+				query = "select taxonomy.name as taxonomy_name, product_taxon.product_id as prod_id
+					from taxonomies as taxonomy
+					inner join taxons as taxon 
+					on taxon.taxonomy_id = taxonomy.id
+					inner join products_taxons as product_taxon
+					on product_taxon.taxon_id = taxon.id
+					where product_taxon.product_id = ${product.id}" >
+				<field column="taxonomy_name" name="product_parent_taxonomy_name" />
+			</entity>
+
+			<entity name="color"
+				query="select distinct lower(name) as l_name
+					from actual_product_colors
+					where product_id = ${product.id}">
+				<field column="l_name" name="product_color" />
+			</entity>
+
+			<entity name="tag"
+				query="select distinct trim(tag_name) as tag_name, trim(value) as tag_value
+					from tags
+					where lower(trim(tag_name)) in ('collection', 'design', 'gemstone', 'gemstones', 'material', 'occasion', 'plating', 'type')
+						and taggable_id = ${product.id}">
+				<field column="tag_name" name="product_tag_name" />
+				<field column="tag_value" name="product_tag_value" />
+			</entity>
+
+			<entity name="collection"
+				query = "select distinct trim(value) as tag_value
+					from tags
+					where lower(trim(tag_name)) = 'collection'
+						and taggable_id = ${product.id}">
+				<field column="tag_value" name="product_collection_value" />
+			</entity>
+
+			<entity name="material"
+				query = "select distinct trim(value) as tag_value
+					from tags
+					where lower(trim(tag_name)) = 'material'
+						and taggable_id = ${product.id}">
+				<field column="tag_value" name="product_material_value" />
+			</entity>
+
+			<entity name="type"
+				query = "select distinct trim(value) as tag_value
+					from tags
+					where lower(trim(tag_name)) = 'type'
+						and taggable_id = ${product.id}">
+				<field column="tag_value" name="product_type_value" />
+			</entity>
+
+			<entity name="plating"
+				query = "select distinct trim(value) as tag_value
+					from tags
+					where lower(trim(tag_name)) = 'plating'
+						and taggable_id = ${product.id}">
+				<field column="tag_value" name="product_plating_value" />
+			</entity>
+
+			<entity name="gemstones"
+				query = "select distinct trim(value) as tag_value
+					from tags
+					where lower(trim(tag_name)) = 'gemstones'
+						and taggable_id = ${product.id}">
+				<field column="tag_value" name="product_gemstones_value" />
+			</entity>
+
+			<entity name="occasion"
+				query = "select distinct trim(value) as tag_value
+					from tags
+					where lower(trim(tag_name)) = 'occasion'
+						and taggable_id = ${product.id}">
+				<field column="tag_value" name="product_occasion_value" />
+			</entity>
+
+			<entity name="promotion"
+				query="select distinct lower(trim(tag_name)) as l_promo_name, lower(trim(value)) as l_promo_value
+					from tags
+					where lower(trim(tag_name)) not in ('design', 'gemstone', 'gemstones', 'material', 'occasion', 'plating', 'type')
+						and taggable_id = ${product.id}">
+				<field column="l_promo_name" name="product_promotion_name" />
+				<field column="l_promo_value" name="product_promotion_value" />
+			</entity>
+
+			<entity name="asset"
+				query="select id, position, ('{' || '&quot;id&quot;:' || cast(id as char(10)) || ',' || '&quot;contentType&quot;:' || '&quot;' || attachment_content_type || '&quot;' || ',' || '&quot;file&quot;:' || '&quot;' || attachment_file_name || '&quot;' || ',' || '&quot;position&quot;:' || cast(position as char(10)) || ',' || '&quot;type&quot;:' || '&quot;' || type || '&quot;' || ',' || '&quot;width&quot;:' || cast(attachment_width as char(10)) || ',' || '&quot;height&quot;:' || cast(attachment_height as char(10)) ||  ',' || '&quot;altText&quot;:' || '&quot;' || coalesce(alt, '') || '&quot;' || '}') as asset_detail_json
+					from assets
+					where viewable_id = ${product.id}
+					order by position">
+				<field column="id" name="product_asset_id" />
+				<field column="position" name="product_asset_position_id" />
+				<field column="asset_detail_json" name="product_asset_detail_json" />
+			</entity>
+
+			<entity name="line_items"
+				query="select coalesce(count(li.id),0) as in_cart_count
+					from variants as v
+						left outer join line_items as li on v.id = li.variant_id
+					where v.product_id = ${product.id}">
+				<field column="in_cart_count" name="product_in_cart_count" />
+			</entity>
+
+			<entity name="variant"
+				query="select id, product_id, sku, is_master, count_on_hand, cost_price, price
+					from variants
+					where product_id = ${product.id}
+						and deleted_at is null">
+				<field column="id" name="variant_id" />
+				<field column="product_id" name="variant_product_id" />
+				<field column="sku" name="variant_sku" />
+				<field column="is_master" name="variant_is_master" />
+				<field column="count_on_hand" name="variant_count_on_hand" />
+				<field column="cost_price" name="variant_cost_price" />
+				<field column="price" name="variant_price" />
+				<field column="sku" name="vSku"/>
+
+				<entity name="variant_options"
+					query="select distinct ot.presentation as option_type, ov.presentation as option_type_value, (ot.presentation || ' ' || ov.presentation) as option_text, ('{' || '&quot;variantId&quot;:' || cast(ovv.variant_id as char(10)) || ',' || '&quot;option_type&quot;:' || '&quot;' || ot.presentation || '&quot;' || ',' || '&quot;option_type_value&quot;:' || '&quot;' || ov.presentation || '&quot;' || '}') as option_json
+						from option_values as ov 
+							inner join option_types as ot on ov.option_type_id = ot.id
+							inner join option_values_variants as ovv on ovv.option_value_id = ov.id
+						where ovv.variant_id = ${variant.id}">
+					<field column="option_type" name="variant_option_type" />
+					<field column="option_type_value" name="variant_option_type_value" />
+					<field column="option_text" name="variant_option_text" />
+					<field column="option_json" name="variant_option_json" />
+				</entity>
+			</entity>
+
+			<entity name="master_variant"
+				query="select id
+					from variants 
+					where is_master = true 
+						and product_id = ${product.id}">
+				<field column="id" name="master_variant_id" />
+			</entity>
+		</entity>
+	</document>
+</dataConfig>
